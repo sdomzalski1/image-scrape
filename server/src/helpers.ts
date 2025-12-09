@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { randomUUID } from 'crypto';
+import net from 'net';
 import path from 'path';
 import { ImageInfo } from './types';
 
@@ -10,10 +11,50 @@ export const isValidHttpUrl = (value: string | undefined): boolean => {
   if (!value) return false;
   try {
     const parsed = new URL(value);
-    return SUPPORTED_PROTOCOLS.has(parsed.protocol);
+    if (!SUPPORTED_PROTOCOLS.has(parsed.protocol)) return false;
+    if (isBlockedHost(parsed.hostname)) return false;
+    return true;
   } catch {
     return false;
   }
+};
+
+const isPrivateIPv4 = (ip: string): boolean => {
+  const parts = ip.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local
+  if (a === 0) return true; // invalid/unspecified
+  return false;
+};
+
+const isPrivateIPv6 = (ip: string): boolean => {
+  const normalized = ip.toLowerCase();
+  return (
+    normalized === '::1' || // loopback
+    normalized.startsWith('fc') || // unique local
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80') // link-local
+  );
+};
+
+const isIpBlocked = (ip: string): boolean => {
+  if (net.isIPv4(ip)) return isPrivateIPv4(ip);
+  if (net.isIPv6(ip)) return isPrivateIPv6(ip);
+  return false;
+};
+
+export const isBlockedHost = (hostname: string | undefined): boolean => {
+  if (!hostname) return true;
+  const lower = hostname.toLowerCase();
+  if (lower === 'localhost' || lower === 'ip6-localhost') return true;
+  if (lower.endsWith('.local')) return true;
+  if (net.isIP(hostname)) return isIpBlocked(hostname);
+  return false;
 };
 
 export const normalizeImageUrl = (
@@ -24,6 +65,7 @@ export const normalizeImageUrl = (
   try {
     const absolute = new URL(src, pageUrl);
     if (!SUPPORTED_PROTOCOLS.has(absolute.protocol)) return null;
+    if (isBlockedHost(absolute.hostname)) return null;
     return absolute.toString();
   } catch {
     return null;

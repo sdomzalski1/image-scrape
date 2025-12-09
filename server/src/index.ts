@@ -7,23 +7,31 @@ import {
   buildArchiveFilename,
   buildImageFilename,
   extractImagesFromHtml,
+  isBlockedHost,
   isValidHttpUrl,
 } from './helpers';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const HOST = process.env.HOST || '127.0.0.1';
+const MAX_HTML_BYTES = 1_500_000; // ~1.5 MB cap to avoid oversized pages
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:3000',
+];
+const EXTRA_ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+const ALLOWED_ORIGINS = [...DEFAULT_ALLOWED_ORIGINS, ...EXTRA_ALLOWED_ORIGINS];
 
+app.disable('x-powered-by');
 app.use(
   cors({
     origin: (origin, callback) => {
-      const allowed = [
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
-        'http://localhost:3000',
-      ];
-      if (!origin || allowed.includes(origin)) {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
         return callback(null, origin);
       }
       return callback(new Error('Not allowed by CORS'));
@@ -42,11 +50,20 @@ app.post('/api/scrape', async (req: Request, res: Response) => {
   }
 
   const targetUrl = url as string;
+  const targetHost = new URL(targetUrl).hostname;
+  if (isBlockedHost(targetHost)) {
+    return res
+      .status(400)
+      .json({ error: 'This host is not allowed. Please use a public website URL.' });
+  }
 
   try {
     const response = await axios.get<string>(targetUrl, {
       timeout: 10000,
       responseType: 'text',
+      maxContentLength: MAX_HTML_BYTES,
+      maxBodyLength: MAX_HTML_BYTES,
+      maxRedirects: 3,
       headers: {
         'User-Agent': 'image-scraper/1.0 (+https://localhost)',
         Accept: 'text/html,application/xhtml+xml',
@@ -80,6 +97,17 @@ app.post('/api/download', async (req: Request, res: Response) => {
   const invalidUrl = imageUrls.find((url) => !isValidHttpUrl(url));
   if (invalidUrl) {
     return res.status(400).json({ error: `Invalid image URL provided: ${invalidUrl}` });
+  }
+
+  const blockedUrl = imageUrls.find((url) => {
+    try {
+      return isBlockedHost(new URL(url).hostname);
+    } catch {
+      return true;
+    }
+  });
+  if (blockedUrl) {
+    return res.status(400).json({ error: `Image host is not allowed: ${blockedUrl}` });
   }
 
   const archive = archiver('zip', { zlib: { level: 9 } });
@@ -118,6 +146,7 @@ app.post('/api/download', async (req: Request, res: Response) => {
       const response = await axios.get(url, {
         responseType: 'stream',
         timeout: 12000,
+        maxRedirects: 2,
         headers: {
           Accept: 'image/*',
         },
