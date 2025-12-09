@@ -44,6 +44,17 @@ You can also build locally and push the `client/dist` folder to the `gh-pages` b
 - Server CORS: extend allowed origins with `ALLOWED_ORIGINS` (comma-separated). Include your GitHub Pages URL when deploying the UI there.
 - Server security: private/local hosts (e.g., `localhost`, `10.x.x.x`, `192.168.x.x`, `::1`) are blocked to prevent SSRF; the HTML fetch also caps page size to ~1.5 MB to avoid oversized responses.
 
+## Deploying the API to Vercel
+
+This repo includes an `api/index.ts` serverless entry that wraps the Express app with `serverless-http`:
+
+1. Set Vercel **Root Directory** to the repo root (so `api/` is picked up).
+2. Add env vars:
+   - `ALLOWED_ORIGINS`: include your GitHub Pages origins (e.g., `https://<user>.github.io,https://<user>.github.io/image-scrape`).
+   - `VITE_API_BASE` is **not** needed on the API, only on the client build.
+3. Deploy; the API will be available at `https://<project>.vercel.app/api`.
+4. In GitHub, set repo secret `VITE_API_BASE` to that URL so the Pages build points to it.
+
 ## Stack
 
 - **Backend:** Node, Express, Cheerio, Axios, Archiver, TypeScript.
